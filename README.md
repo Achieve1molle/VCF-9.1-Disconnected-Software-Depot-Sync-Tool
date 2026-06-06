@@ -1,12 +1,10 @@
 # VCF-9.1-Disconnected-Software-Depot-Sync-Tool
 
-
-# VCF 9.1 Disconnected Software Depot Sync Tool
-
 **Script Name:** `VCF9.1_Disconnected_Software_Depot_Sync_Tool_Rev1.1.ps1`  
 **Release:** `Rev1.1 / UI v1.1.6-full`  
 **Runtime:** PowerShell 7+ / WPF  
 **Primary Use Case:** Simplify VCF 9.1 disconnected software depot download and Fleet Software Depot upload workflows.
+**Author Michael Molle
 
 ---
 
