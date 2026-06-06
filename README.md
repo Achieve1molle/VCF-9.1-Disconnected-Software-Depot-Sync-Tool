@@ -4,6 +4,7 @@
 **Release:** `Rev1.1 / UI v1.1.6-full`  
 **Runtime:** PowerShell 7+ / WPF  
 **Primary Use Case:** Simplify VCF 9.1 disconnected software depot download and Fleet Software Depot upload workflows.
+
 **Author Michael Molle
 
 ---
