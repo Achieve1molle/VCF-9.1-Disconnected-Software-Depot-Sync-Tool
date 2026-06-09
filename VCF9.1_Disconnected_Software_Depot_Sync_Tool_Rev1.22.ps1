@@ -2,7 +2,7 @@
 .SYNOPSIS
   VCF 9.1 Disconnected Software Depot Sync Tool
 .DESCRIPTION
-  Production PowerShell 7 / WPF UI wrapper for Broadcom VCF Download Tool.
+ Production PowerShell 7 / WPF UI wrapper for Broadcom VCF Download Tool.
   Rev1.1 / UI v1.2.2 adds three download modes:
     Mode A - Base platform INSTALL artifacts only, all 9.1 versions available in local catalog.
     Mode B - Base platform + add-on/adjacent INSTALL artifacts, all 9.1 versions available in local catalog.
@@ -10,6 +10,8 @@
 .NOTES
   Script Name: VCF9.1_Disconnected_Software_Depot_Sync_Tool_Rev1.1.ps1
   Release: Rev1.1 / UI v1.2.2-full
+ .Author
+  Michael Molle
 #>
 [CmdletBinding()]
 param([switch]$NoRelaunch)
