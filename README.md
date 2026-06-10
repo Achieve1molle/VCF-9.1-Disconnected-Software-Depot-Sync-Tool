@@ -2,234 +2,381 @@
 
 PowerShell 7 / WPF UI wrapper for the Broadcom VCF Download Tool supporting disconnected and controlled-connectivity VMware Cloud Foundation 9.1 software depot workflows.
 
-> Current documented release: **Rev1.1 / UI v1.2.2 Three-Modes**
+**Current documented release:** `Rev1.24 Production Full`  
+**Script file name:** `VCF9.1_Disconnected_Software_Depot_Sync_Tool_Rev1.24.ps1`
+
+> This README documents the current production workflow, including the latest Day-2 Fleet binary upload behavior, metadata staging behavior, full install binary download behavior, and Fleet Depot Service validation guidance.
 
 ---
 
 ## Purpose
 
-This tool provides an operator-friendly UI for staging VCF 9.1 software depot content on a Windows jump host and uploading required binaries into Fleet Software Depot. It was built to simplify disconnected depot operations where direct connected-depot access is unavailable, blocked, or temporarily unsuitable.
+This tool provides an operator-friendly Windows UI for building and maintaining a VCF 9.1 disconnected software depot for an **already deployed VCF 9.1 fleet**.
 
-The tool does **not** replace the Broadcom VCF Download Tool. It wraps the Broadcom tool and adds workflow guidance, state tracking, chunked upload handling, debug visibility, and retry controls.
+The tool does **not** replace the Broadcom VCF Download Tool. It wraps the Broadcom tool and adds:
 
----
-
-## Typical Use Case
-
-Use this tool when a VCF 9.1 environment must temporarily or permanently operate with a disconnected software depot model.
-
-Example scenarios:
-
-- SSL proxy or SSL inspection prevents the VCF 9.1 software depot workflow from completing successfully.
-- A customer site requires a controlled jump-host staging process.
-- The production rollout cannot wait for a connected-depot networking/proxy issue to be resolved.
-- Fleet Software Depot must be populated manually from a staged DepotStore.
+- guided workflow buttons,
+- local metadata/catalog/manifest staging for UNC-path-sensitive metadata operations,
+- full VCF 9.1 install binary download orchestration,
+- optional upgrade and ESX download orchestration,
+- Fleet Depot Service binary upload orchestration,
+- targeted Day-2/Fleet component upload orchestration,
+- external worker execution with UI log tailing,
+- config save/load without saving secrets,
+- repeatable operational flow for disconnected depot maintenance.
 
 ---
 
-## High-Level Workflow
+## Supported Use Case
 
-1. Validate the local VCF Download Tool path.
-2. Generate a Software Depot ID.
-3. Register the Software Depot ID in the Broadcom portal.
-4. Paste the activation code into the UI.
-5. Select a download mode.
-6. Download binaries into a local DepotStore.
-7. Validate TCP/443 connectivity to VCF Operations and Fleet Software Depot.
-8. Upload staged binaries into Fleet Software Depot.
-9. Refresh/resync Fleet or installer catalog if required.
-10. Retry VCF install or lifecycle workflow.
+Use this tool when a deployed VCF 9.1 environment must operate with a disconnected or staged software depot model.
+
+Common scenarios include:
+
+- VCF Operations / Fleet Depot Service cannot use a fully connected depot.
+- A customer environment requires a controlled Windows jump-host download process.
+- SSL proxy, SSL inspection, or restricted egress prevents connected depot workflow from completing reliably.
+- Software depot content must be downloaded once, staged, validated, and then uploaded to VCF Operations / Fleet Depot Service.
+- Fleet Day-2 binaries need to be uploaded after the VCF fleet already exists.
+- Optional Day-2 components such as logging, networks, realtime metrics, observability, and HCX need to be made available for install.
 
 ---
 
-## Download Modes
+## Current UI Workflow
 
-The tool now supports three download modes. These modes are intended to prevent the situation where Fleet shows binaries as available, but an install or lifecycle workflow cannot find the exact version or artifact it expects.
+The UI presents a numbered workflow:
 
-### Mode A — Base Platform INSTALL Only
+1. **Readme**
+2. **Load Config...**
+3. **Save Config...**
+4. **Validate Tool**
+5. **Generate ID**
+6. **Connect to VCF OPS**
+7. **Download Depot**
+8. **Upload VCF Binaries**
+9. **Upload Fleet Binaries**
 
-**UI label:**
+The UI labels the two upload actions as **Step 8a** and **Step 8b** because both operate against the same downloaded depot but have different upload scopes.
 
-```text
-Mode A - Base platform INSTALL only, all 9.1 catalog versions
+---
+
+## UI Fields
+
+### Tool, Depot, Activation, Download
+
+| Field | Purpose |
+|---|---|
+| **VCFDT bin or .bat** | Path to the VCF Download Tool `bin` directory or directly to `vcf-download-tool.bat`. |
+| **Download directory** | Final depot directory. This is also the upload source directory. |
+| **Local catalog staging** | Local metadata/catalog/manifest staging path. Used for metadata download first; metadata is then copied to the download directory. |
+| **Generated Depot ID** | Software Depot ID generated by VCF Download Tool. Not saved to config. |
+| **Activation code** | Broadcom depot activation/download token. Not saved to config. |
+| **Upgrade binaries** | Optional. Also downloads/uploads UPGRADE binaries when checked. |
+| **ESX binaries** | Optional. Also downloads ESX binaries and metadata when checked. |
+
+### Fleet Upload Target
+
+| Field | Purpose |
+|---|---|
+| **VCF version / SKU** | Default `9.1.0.0` and `VCF`. |
+| **OPS FQDN** | VCF Operations FQDN used for authentication and Fleet Management API orchestration. |
+| **Fleet FQDN** | Fleet Depot Service FQDN / software depot endpoint. |
+| **OPS username** | VCF Operations user. Default is `admin`. |
+| **OPS password** | VCF Operations password. Not saved to config. |
+| **Upload retries** | Reserved for upload retry handling and future retry tuning. |
+
+---
+
+## Download Behavior
+
+The download workflow intentionally separates metadata staging from binary download location.
+
+### Step 7 — Download Depot
+
+The script performs this sequence:
+
+1. Metadata download targets **Local catalog staging**:
+
+```powershell
+vcf-download-tool metadata download `
+  --depot-download-activation-code-file <temp activation file> `
+  --depot-store <Local catalog staging>
 ```
 
-Mode A targets base VCF platform install artifacts only. It is intended for the minimum platform install footprint while still collecting all 9.1 catalog versions available for those base components.
+2. Metadata/catalog/manifest content is copied from **Local catalog staging** to **Download directory**.
 
-Mode A includes base components such as:
+3. Full INSTALL binary download targets **Download directory**:
 
-- `VCENTER`
-- `SDDC_MANAGER_VCF`
-- `NSX_T_MANAGER`
-- `VSP`
-- `DEPOT_SERVICE`
-- `VCF_LICENSE_SERVER`
-- `VCF_FLEET_LCM`
-- `VCF_SDDC_LCM`
-- `VIDB`
-- `TELEMETRY_ACCEPTOR`
-- `VCFDT`
-
-Use Mode A when the goal is to stage only the base platform install artifacts needed for core VCF installation.
-
----
-
-### Mode B — Base Platform + Add-On INSTALL Artifacts
-
-**UI label:**
-
-```text
-Mode B - Base + HCX/Networks/Logging/Ops add-on INSTALL only, all 9.1 catalog versions
+```powershell
+vcf-download-tool binaries download `
+  --sku VCF `
+  --vcf-version 9.1.0.0 `
+  --depot-download-activation-code-file <temp activation file> `
+  --type INSTALL `
+  --depot-store <Download directory>
 ```
 
-Mode B includes Mode A plus install-only artifacts for common add-on and adjacent services. It is designed for production deployments that may require optional services or later enablement without having to revisit depot population.
+4. If **Upgrade binaries** is checked, UPGRADE binary download also targets **Download directory**.
 
-Mode B includes Mode A plus add-on components such as:
+5. If **ESX binaries** is checked, ESX download also targets **Download directory**.
 
-- `HCX`
-- `VRNI` / VCF Operations for Networks
-- `VRLI` / VCF Operations for Logs
-- `VROPS` / VCF Operations
-- `VRA` / VCF Automation
-- `VCF_OPS_CLOUD_PROXY`
-- `VCFMS_METRICS_STORE`
-- `VCF_OBSERVABILITY_DATA_PLATFORM`
-- `VCF_SALT`
-- `VCF_SALT_RAAS`
-- `VCF_SERVICE_VCD_MIGRATION_BACKEND`
+### Important full depot note
 
-Use Mode B when the environment needs base VCF installation content plus install-compatible add-ons such as HCX, Operations for Networks, Logging, Operations, Automation, Salt, and migration-related artifacts.
+The INSTALL binary download **does not use** `--automated-install`.
+
+This is intentional. The automated-install filter can limit the downloaded set to the automated bring-up subset. Removing the filter allows VCFDT to include broader VCF/Fleet/Day-2 install binaries exposed by the VCF 9.1 catalog, including binaries needed for optional Day-2 components such as logging, networks, realtime metrics, observability, and HCX.
 
 ---
 
-### Mode C — Everything Available in Catalog
+## Day-2 / Fleet Components
 
-**UI label:**
+The script tracks and uploads the following Fleet / Day-2 component list:
 
 ```text
-Mode C - Everything available in catalog, all detected bundle types/components
+VROPS
+VRA
+VSP
+VCF_FLEET_LCM
+VIDB
+VCF_SALT_RAAS
+DEPOT_SERVICE
+VCF_SALT
+VCF_SDDC_LCM
+TELEMETRY_ACCEPTOR
+VCF_OBSERVABILITY_DATA_PLATFORM
+VCFMS_METRICS_STORE
+VRLI
+VRNI
+VCF_SERVICE_VCD_MIGRATION_BACKEND
+HCX
 ```
 
-Mode C is the broadest mode. The tool parses the local `productVersionCatalog.json` and attempts to include every bundle ID discovered in the catalog, regardless of detected component or bundle type.
+Common mapping:
 
-Mode C is intended for maximum compatibility and broad depot population.
-
-Use Mode C when:
-
-- install discovery is failing and the missing component/version is unclear,
-- the safest option is to stage everything exposed by the VCF 9.1 catalog,
-- the environment has enough storage and time to download/upload the broadest possible set,
-- troubleshooting requires ruling out missing depot artifacts.
-
-> Note: Mode C may download artifacts beyond install-only payloads. The upload workflow remains component-oriented and install-focused unless additional upload-type support is explicitly added and validated.
+| Component ID | Functional area |
+|---|---|
+| `VROPS` | VCF Operations |
+| `VRLI` | VCF Operations for Logs / logging |
+| `VRNI` | VCF Operations for Networks |
+| `VCFMS_METRICS_STORE` | Realtime Metrics Store |
+| `VCF_OBSERVABILITY_DATA_PLATFORM` | Observability data platform |
+| `HCX` | HCX |
+| `VRA` | VCF Automation |
+| `VCF_FLEET_LCM` | Fleet lifecycle |
+| `DEPOT_SERVICE` | Software depot service |
 
 ---
 
-## Catalog-Based Expansion Behavior
+## Upload Behavior
 
-The three modes use the local catalog file when available:
+Both upload buttons use **Download directory** as the depot source.
+
+### Step 8a — Upload VCF Binaries
+
+Uploads all eligible binaries from the download directory to VCF Operations / Fleet Depot Service.
+
+Command pattern:
+
+```powershell
+vcf-download-tool depot binaries upload `
+  --ops-fqdn <OPS FQDN> `
+  --ops-auth-source LOCAL `
+  --ops-user <OPS username> `
+  --ops-user-password-file <temp password file> `
+  --depot-fqdn <Fleet FQDN> `
+  --vcf-version 9.1.0.0 `
+  --depot-store <Download directory> `
+  --sku VCF `
+  --type INSTALL
+```
+
+If **Upgrade binaries** is checked, the workflow also attempts `--type UPGRADE`.
+
+### Step 8b — Upload Fleet Binaries
+
+Uploads targeted Fleet / Day-2 component binaries from the download directory.
+
+Command pattern:
+
+```powershell
+vcf-download-tool depot binaries upload `
+  --ops-fqdn <OPS FQDN> `
+  --ops-auth-source LOCAL `
+  --ops-user <OPS username> `
+  --ops-user-password-file <temp password file> `
+  --depot-fqdn <Fleet FQDN> `
+  --vcf-version 9.1.0.0 `
+  --depot-store <Download directory> `
+  --sku VCF `
+  --type INSTALL `
+  --component <component>
+```
+
+This is expected to show both `--ops-fqdn` and `--depot-fqdn`:
+
+- `--ops-fqdn` is used for VCF Operations authentication and Fleet Management orchestration.
+- `--depot-fqdn` is the Fleet Depot Service target repository.
+
+If the upload log begins with `--component VROPS`, that does not mean only VROPS will be uploaded. The Fleet upload runs component-by-component in the configured order. Later commands include `VCF_OBSERVABILITY_DATA_PLATFORM`, `VCFMS_METRICS_STORE`, `VRLI`, `VRNI`, and `HCX`.
+
+---
+
+## Validating Day-2 Uploads
+
+### Local depot validation before upload
+
+Use VCFDT to verify the local depot contains the desired component before upload:
+
+```powershell
+.
+cf-download-tool.bat binaries list `
+  --sku VCF `
+  --vcf-version 9.1.0.0 `
+  --type INSTALL `
+  --depot-store C:\Staging\DepotStore `
+  --component VRLI
+```
+
+Repeat for:
 
 ```text
-<DepotStore>\PROD\metadata\productVersionCatalog\v1\productVersionCatalog.json
+VRNI
+VCFMS_METRICS_STORE
+VCF_OBSERVABILITY_DATA_PLATFORM
+HCX
+VROPS
 ```
 
-If this file exists, the script parses it to discover available bundle IDs. If the catalog does not exist yet, the script falls back to a curated VCF 9.1 known-good ID list.
+### Fleet Depot validation after upload
 
-Recommended first-run process:
+Use the Fleet Depot list command with the same VCF Operations and Fleet Depot Service FQDNs used during upload:
 
-1. Run the download once to seed metadata if the DepotStore is empty.
-2. Re-run the selected mode with **Force re-download** checked.
-3. The second run can parse `productVersionCatalog.json` and expand the selected mode.
+```powershell
+.
+cf-download-tool.bat depot binaries list `
+  --ops-fqdn <OPS FQDN> `
+  --ops-auth-source LOCAL `
+  --ops-user <OPS username> `
+  --ops-user-password-file <password file> `
+  --depot-fqdn <Fleet FQDN> `
+  --vcf-version 9.1.0.0
+```
 
-The UI logs this condition when catalog metadata is not available:
+For component-specific validation, add:
+
+```powershell
+--component VRLI
+```
+
+Repeat for `VRNI`, `VCFMS_METRICS_STORE`, `VCF_OBSERVABILITY_DATA_PLATFORM`, and `HCX`.
+
+### Functional validation in VCF Operations
+
+In VCF Operations, validate uploaded binaries in Fleet Management / Binary Management. The component should show as downloaded, available, or ready for install before attempting Day-2 installation.
+
+---
+
+## Rerun / Resume Expectations
+
+When the script is run again with the same **Download directory**:
+
+- metadata refreshes in **Local catalog staging**,
+- metadata/catalog/manifest content is copied to **Download directory**,
+- VCF Download Tool evaluates the existing depot store in **Download directory**,
+- existing completed binaries should not need to be downloaded again,
+- missing or incomplete binaries are handled by VCF Download Tool during the download command.
+
+The script does not delete the download directory before running. Do not manually delete the depot store unless intentionally starting over.
+
+---
+
+## vCenter Lifecycle Manager Download Sources Note
+
+In a VCF-managed environment, vCenter Lifecycle Manager may show local VCF Depot-backed sources such as:
 
 ```text
-Catalog not present or no IDs matched selected mode. Using curated fallback IDs.
-Run again with Force re-download after metadata exists to expand selected mode.
+http://localhost:1080/depot/PROD/...
 ```
 
----
-
-## Upload Workflow
-
-The upload workflow remains chunked by component group to reduce risk and improve recovery:
-
-1. vCenter alone
-2. VCF Automation alone
-3. VCF services runtime alone
-4. VCF Operations for Networks alone
-5. NSX alone
-6. Remaining services and add-ons
-
-This design makes large imports easier to monitor and retry. If one component fails, the operator can retry that component without restarting the entire depot population process.
+Manual Broadcom Internet download sources added directly in vCenter may not persist if VCF/Fleet lifecycle management is reconciling the source list. For this disconnected depot workflow, validate the VCF Operations / Fleet Depot Service path rather than relying on manually added vCenter internet download sources.
 
 ---
 
-## State Files
+## Logs and Worker Files
 
-The tool writes state files into the DepotStore:
+Each run creates a timestamped run folder under the directory where the script is executed.
+
+Example if the script is launched from `C:\Staging`:
 
 ```text
-.vcf-download-state.json
-.vcf-upload-state.json
+C:\Staging\VCFDepotSync-YYYYMMDD-HHMMSS
 ```
 
-These files allow the UI to skip work that has already completed.
-
-Use **Force re-download** or **Force re-upload** when intentionally repeating a task, switching modes, or repopulating Fleet after changing the DepotStore contents.
-
----
-
-## SSL Proxy / Certificate Notes
-
-If downloads fail with Java PKIX or `unable to find valid certification path` errors, the VCF Download Tool bundled Java runtime likely does not trust the SSL inspection or proxy certificate chain.
-
-Common failing endpoint:
+Typical files:
 
 ```text
-https://eapi.broadcom.com/vcf/generateToken
+VCFDepotSync.log
+Download_Depot.worker.log
+Download_Depot.task.json
+Download_Depot.worker.ps1
+Upload_VCF_Binaries.worker.log
+Upload_Fleet_Binaries.worker.log
 ```
 
-Common options:
+---
 
-1. Bypass SSL inspection for Broadcom endpoints such as:
-   - `eapi.broadcom.com`
-   - `dl.broadcom.com`
-   - `vcf.broadcom.com`
-   - `vcf.broadcom.net`
-2. Import the customer SSL proxy root/intermediate certificate into the VCF Download Tool bundled Java truststore:
+## Config Save / Load
+
+The **Load Config...** and **Save Config...** buttons use file picker dialogs.
+
+The config file may save paths, FQDNs, VCF version, SKU, and checkbox selections.
+
+The config file intentionally does **not** save:
+
+- Activation code,
+- Depot ID,
+- OPS password.
+
+---
+
+## Security Notes
+
+Temporary secret files are created only when needed for VCF Download Tool command execution.
+
+Examples:
 
 ```text
-<VCF_Download_Tool>\jre\win32\lib\security\cacerts
+%TEMP%
+cfdt-activation-code-<guid>.txt
+%TEMP%
+cfdt-ops-password-<guid>.txt
 ```
 
----
-
-## Recommended Mode Selection
-
-- Use **Mode A** for core VCF base platform install content.
-- Use **Mode B** for production staging where base platform plus common add-ons are expected.
-- Use **Mode C** for broadest compatibility or when troubleshooting missing install/lifecycle artifacts.
-
-For most production rollouts where optional services may be needed later, **Mode B** is the recommended balance.
-
-For troubleshooting “available in depot but installer cannot find install binaries,” start with **Mode B**, then use **Mode C** if the missing artifact/version is still unclear.
+The script removes stale and current temp secret files where possible.
 
 ---
 
-## Operational Recommendation
+## Recommended Operational Flow
 
-After downloading and uploading new artifacts:
-
-1. Confirm Fleet Depot shows the expected binaries as available.
-2. Refresh or resync Fleet/LCM catalog if the UI provides that option.
-3. Retry the install or lifecycle workflow.
-4. If the installer still cannot find binaries, capture the exact missing component/version and compare it to the Fleet Depot package list.
+1. Place `VCF9.1_Disconnected_Software_Depot_Sync_Tool_Rev1.24.ps1` on the Windows jump host.
+2. Launch with PowerShell 7.
+3. Validate the VCF Download Tool path.
+4. Generate the Software Depot ID.
+5. Register the Software Depot ID in the Broadcom portal.
+6. Paste the activation code into the UI.
+7. Set Download directory and Local catalog staging directory.
+8. Run **Download Depot**.
+9. Confirm metadata copied to Download directory and binaries are downloading into Download directory.
+10. Confirm expected Day-2 components are present locally.
+11. Validate connectivity to VCF Operations and Fleet Depot Service.
+12. Run **Upload VCF Binaries** or **Upload Fleet Binaries** as appropriate.
+13. Validate Fleet Depot contents using `depot binaries list` and VCF Operations Binary Management.
+14. Refresh/resync VCF Operations / Fleet catalog if required.
+15. Retry the VCF lifecycle or Day-2 install operation.
 
 ---
 
 ## Disclaimer
 
 This tool is an operational wrapper around Broadcom VCF Download Tool commands. Always validate the workflow in a non-production or controlled environment before production use.
-
 
