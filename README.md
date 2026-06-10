@@ -1,7 +1,7 @@
 # VCF 9.1 Disconnected Software Depot Sync Tool
 
 PowerShell 7 / WPF UI wrapper for the Broadcom VCF Download Tool supporting disconnected and controlled-connectivity VMware Cloud Foundation 9.1 software depot workflows.
-
+## Author Michael Molle
 **Current documented release:** `Rev1.24 Production Full`  
 **Script file name:** `VCF9.1_Disconnected_Software_Depot_Sync_Tool_Rev1.24.ps1`
 
